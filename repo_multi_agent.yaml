@@ -1,0 +1,128 @@
+framework: praisonai
+process: workflow
+name: Repo Multi-Agent Analysis
+description: Parallel multi-agent analysis for repository architecture, modules, dependencies and engineering risks
+input: "Analyze repository at {{repo_path}}"
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  repo_path: "."
+  primary_doc: "project_module_analysis.md"
+  topology_doc: "repo_structure_overview.md"
+
+agents:
+  architect_agent:
+    role: System Architect
+    goal: Analyze architecture boundaries and main execution paths
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      You are a senior software architect.
+      Focus on entry points, core modules, runtime boundaries, and major data/control flow.
+      Output concise Chinese markdown bullets with file paths when possible.
+      You must call tools first, then summarize findings based on tool evidence.
+      Keep output concise (<= 15 bullets, <= 1200 words).
+
+  module_agent:
+    role: Module Analyst
+    goal: Analyze module responsibilities and coupling
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      You are a module analyst.
+      Focus on module layering, responsibilities, reusable components, and potential duplication.
+      Output concise Chinese markdown bullets with explicit module names.
+      You must call tools first, then summarize findings based on tool evidence.
+      Keep output concise (<= 15 bullets, <= 1200 words).
+
+  dependency_agent:
+    role: Dependency Analyst
+    goal: Analyze key dependencies and environment requirements
+    tools:
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      You are a dependency analyst.
+      Focus on Python packages, optional extras, CLI/runtime prerequisites, and compatibility risks.
+      Output concise Chinese markdown bullets with practical deployment impact.
+      You must call tools first, then summarize findings based on tool evidence.
+      Keep output concise (<= 12 bullets, <= 900 words).
+
+  risk_agent:
+    role: Quality Risk Analyst
+    goal: Identify implementation risks and optimization opportunities
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      You are a quality and risk analyst.
+      Focus on maintainability, observability, reliability, and common failure points.
+      Output concise Chinese markdown bullets with actionable recommendations.
+      You must call tools first, then summarize findings based on tool evidence.
+      Keep output concise (<= 12 bullets, <= 900 words).
+
+  synthesizer:
+    role: Report Synthesizer
+    goal: Merge all parallel outputs into structured deliverables
+    instructions: |
+      You are a synthesis writer.
+      Merge all agent outputs into concise and practical markdown content.
+      Keep output directly reusable.
+
+steps:
+  - name: parallel_analysis
+    parallel:
+      - agent: architect_agent
+        action: |
+          Analyze repository "{{repo_path}}" architecture.
+          Include: project entry points, major subsystems, and execution flow.
+      - agent: module_agent
+        action: |
+          Analyze repository "{{repo_path}}" module structure.
+          Include: module responsibilities, interfaces, and coupling hotspots.
+      - agent: dependency_agent
+        action: |
+          Analyze repository "{{repo_path}}" dependencies and environment constraints.
+          Include: required/optional dependencies and conda deployment concerns.
+      - agent: risk_agent
+        action: |
+          Analyze repository "{{repo_path}}" engineering risks and optimization opportunities.
+          Include: top risks, likely root causes, and prioritized mitigations.
+
+  - agent: synthesizer
+    output_variable: analysis_context
+    max_retries: 1
+    action: |
+      Synthesize all parallel analysis outputs from {{previous_output}}.
+      Build a unified context that includes architecture, modules, dependencies and risks.
+
+  - agent: synthesizer
+    output_file: "{{primary_doc}}"
+    max_retries: 1
+    action: |
+      Using {{analysis_context}}, write a full markdown document for project module analysis only.
+      Include architecture boundaries, module responsibilities, and technical recommendations.
+
+  - agent: synthesizer
+    output_file: "{{topology_doc}}"
+    max_retries: 1
+    action: |
+      Using {{analysis_context}}, write a markdown document for repository structure overview only.
+      Include directory map, entry points, and module relationship summary.

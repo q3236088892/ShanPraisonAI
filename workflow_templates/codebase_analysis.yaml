@@ -1,0 +1,144 @@
+framework: praisonai
+process: workflow
+name: Codebase Analysis Template
+description: Parallel multi-agent analysis for architecture, modules, dependencies, and risks
+input: "Analyze repository at {{repo_path}}"
+
+workflow:
+  planning: false
+  reasoning: false
+  verbose: true
+
+variables:
+  repo_path: "."
+  output_doc: "project_analysis.md"
+  output_map: "repository_map.md"
+
+agents:
+  architecture_agent:
+    role: System Architect
+    goal: Analyze high-level architecture and execution paths
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      Focus on entry points, runtime boundaries, and control flow.
+      Use concise markdown bullets with file paths when possible.
+      Prefer using provided repository snapshot/context as primary evidence.
+      Keep output concise (<= 15 bullets, <= 1200 words).
+
+  module_agent:
+    role: Module Analyst
+    goal: Analyze module boundaries and responsibilities
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      Focus on module purpose, coupling, and separation of concerns.
+      Use concise markdown bullets and practical observations.
+      Prefer using provided repository snapshot/context as primary evidence.
+      Keep output concise (<= 15 bullets, <= 1200 words).
+
+  dependency_agent:
+    role: Dependency Analyst
+    goal: Analyze dependencies and environment constraints
+    tools:
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      Focus on required dependencies, optional extras, and compatibility risks.
+      Include deployment impact and remediation suggestions.
+      Prefer using provided repository snapshot/context as primary evidence.
+      Keep output concise (<= 12 bullets, <= 900 words).
+
+  risk_agent:
+    role: Quality Risk Analyst
+    goal: Identify engineering risks and optimization opportunities
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      Focus on maintainability, reliability, observability, and testing gaps.
+      Rank findings by impact.
+      Prefer using provided repository snapshot/context as primary evidence.
+      Keep output concise (<= 12 bullets, <= 900 words).
+
+  synth_agent:
+    role: Report Synthesizer
+    goal: Merge all analysis into final deliverables
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      Produce concise, practical markdown output.
+      Keep content implementation-oriented and directly reusable.
+      Prefer at most 1-2 lightweight tool calls before final output.
+      Keep tool payload small (do not request oversized listings).
+      Output only final markdown body; do not return empty output.
+
+steps:
+  - name: parallel_analysis
+    parallel:
+      - agent: architecture_agent
+        action: |
+          Analyze architecture of "{{repo_path}}".
+          Include entry points, execution chain, and service boundaries.
+      - agent: module_agent
+        action: |
+          Analyze module structure of "{{repo_path}}".
+          Include core modules, responsibilities, and coupling.
+      - agent: dependency_agent
+        action: |
+          Analyze dependencies of "{{repo_path}}".
+          Include runtime requirements and deployment constraints.
+      - agent: risk_agent
+        action: |
+          Analyze technical risks in "{{repo_path}}".
+          Include top risks and prioritized mitigation actions.
+
+  - name: synthesize_context
+    agent: synth_agent
+    output_variable: analysis_context
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      Optionally call list_repo_dirs once (lightweight) to refresh context.
+      Synthesize all outputs from {{previous_output}}.
+      Build a unified analysis context with key architecture/module/dependency/risk findings.
+      Keep this context concise (<= 800 words) and structured.
+
+  - name: write_project_analysis
+    agent: synth_agent
+    output_file: "{{output_doc}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      Optionally call read_text_file on 1 key repo doc/config if needed for final verification.
+      Using {{analysis_context}}, write only the full project analysis document in markdown.
+      Include sections: architecture, modules, dependencies, risks, and recommendations.
+      Keep total length <= 1200 words.
+
+  - name: write_repository_map
+    agent: synth_agent
+    output_file: "{{output_map}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      Optionally call list_repo_dirs once, then write the final map.
+      Using {{analysis_context}}, write only the repository structure overview in markdown.
+      Include directory map, key entry points, and module relationship summary.
+      Keep total length <= 700 words.

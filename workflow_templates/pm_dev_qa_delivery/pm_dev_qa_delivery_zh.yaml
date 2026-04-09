@@ -1,0 +1,208 @@
+framework: praisonai
+process: workflow
+name: PM-DEV-QA Delivery Loop (ZH)
+description: 需求驱动的项目交付模板（项目经理设计 -> 开发实现 -> QA测试 -> 多轮返工 -> 交付报告）
+input: "{{requirement}}"
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  project_root: "."
+  requirement: "请描述你要实现的系统目标"
+  tech_stack: "请指定技术栈，如：FastAPI + Vue3 + PostgreSQL"
+  deploy_target: "请指定部署目标，如：Ubuntu 22.04 + Docker"
+  acceptance_criteria: "请给出核心验收标准（功能、接口、性能、稳定性）"
+  scaffold_command: ""
+  build_command: ""
+  unit_test_command: "pytest -q"
+  browser_test_command: ""
+  deploy_command: ""
+  delivery_rounds:
+    - 1
+    - 2
+    - 3
+    - 4
+    - 5
+  output_plan: "项目实施计划.md"
+  output_report: "项目交付总结.md"
+
+agents:
+  pm_agent:
+    role: Project Manager
+    goal: 拆解需求，定义技术方案、验收标准与迭代计划
+    tools:
+      - list_files
+      - read_file
+      - execute_command
+    tool_choice: auto
+    instructions: |
+      你是资深技术项目经理。
+      必须输出可执行的工程计划，而不是空泛描述。
+      至少包含：
+      1) 目标与范围边界
+      2) 技术选型与理由
+      3) 模块拆分与优先级
+      4) 验收标准（可测试）
+      5) 风险与回滚策略
+      必须使用简体中文，路径/命令/标识符保留原文。
+
+  dev_agent:
+    role: Senior Fullstack Engineer
+    goal: 按 PM 方案实现代码，并基于 QA 反馈持续修复
+    tools:
+      - list_files
+      - read_file
+      - write_file
+      - execute_command
+    tool_choice: auto
+    instructions: |
+      你是交付导向开发工程师。
+      每轮必须：
+      1) 读取上轮 QA 反馈；
+      2) 只做与反馈相关的最小必要改动；
+      3) 执行构建/静态检查（若有命令）；
+      4) 输出改动文件、核心命令、关键结果。
+      若上轮已 APPROVED，必须输出 APPROVED_EARLY_EXIT 并停止改动。
+      输出必须使用简体中文。
+
+  qa_agent:
+    role: QA + Automation Engineer
+    goal: 执行测试、给出通过/不通过结论，并生成精确返工清单
+    tools:
+      - list_files
+      - read_file
+      - execute_command
+    tool_choice: auto
+    instructions: |
+      你是严格的测试工程师。
+      你必须执行“真实命令测试”，不能只做文本评审。
+      测试顺序：
+      1) 构建/启动检查（如适用）
+      2) 单元/集成测试（unit_test_command）
+      3) 浏览器/E2E 测试（browser_test_command 非空时）
+      输出格式必须严格二选一开头：
+      - APPROVED: <通过理由与证据>
+      - NEEDS_REWORK: <失败原因 + 修复清单（文件/函数/命令证据）>
+      输出必须使用简体中文。
+
+  release_agent:
+    role: Delivery Engineer
+    goal: 根据 QA 最终结论执行部署（通过才部署）
+    tools:
+      - execute_command
+    tool_choice: auto
+    instructions: |
+      你是发布工程师。
+      规则：
+      - 只有当输入包含 APPROVED 时才允许部署；
+      - 若 deploy_command 为空，输出可执行部署步骤并标记 MANUAL_DEPLOY；
+      - 若 deploy_command 非空，执行并给出结果。
+      输出必须使用简体中文。
+
+  report_agent:
+    role: Project Delivery Reporter
+    goal: 汇总完整过程并输出最终交付报告
+    tools:
+      - read_file
+      - list_files
+    tool_choice: auto
+    instructions: |
+      你是项目复盘报告负责人。
+      报告必须包含：
+      - 需求与范围
+      - 技术方案与实现摘要
+      - 迭代测试结果（每轮）
+      - 最终验收状态
+      - 部署状态
+      - 未决问题与下一步
+      使用简体中文，信息必须可追溯。
+
+steps:
+  - name: project_planning
+    agent: pm_agent
+    output_variable: pm_plan_context
+    output_file: "{{output_plan}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      请基于以下输入制定可执行项目方案：
+      - 需求：{{requirement}}
+      - 技术栈：{{tech_stack}}
+      - 部署目标：{{deploy_target}}
+      - 验收标准：{{acceptance_criteria}}
+      - 项目目录：{{project_root}}
+      先用工具查看仓库现状（目录/关键文件），再输出详细计划。
+      全文简体中文。
+
+  - name: delivery_loop
+    output_variable: delivery_iterations
+    loop:
+      over: delivery_rounds
+      var_name: round
+    steps:
+      - agent: dev_agent
+        action: |
+          当前迭代：{{round}}
+          PM 计划：{{pm_plan_context}}
+          上轮输出：{{previous_output}}
+          项目目录：{{project_root}}
+          可选命令：
+          - scaffold_command: {{scaffold_command}}
+          - build_command: {{build_command}}
+          执行要求：
+          1) 若上轮已包含 "APPROVED"，直接输出 "APPROVED_EARLY_EXIT" 并不再改动；
+          2) 否则按 PM 方案与 QA 反馈做最小必要实现；
+          3) 非空命令时，调用 execute_command 执行命令并附结果证据。
+          输出简体中文。
+
+      - agent: qa_agent
+        action: |
+          当前迭代：{{round}}
+          开发结果：{{previous_output}}
+          项目目录：{{project_root}}
+          测试命令：
+          - unit_test_command: {{unit_test_command}}
+          - browser_test_command: {{browser_test_command}}
+          要求：
+          1) unit_test_command 非空时，必须调用 execute_command 执行；
+          2) browser_test_command 非空时，必须调用 execute_command 执行；
+          3) 根据 {{acceptance_criteria}} 严格判定。
+          输出必须以以下之一开头：
+          - APPROVED:
+          - NEEDS_REWORK:
+          且 NEEDS_REWORK 必须给出可执行修复清单（文件/函数/命令证据）。
+
+  - name: release_or_block
+    agent: release_agent
+    output_variable: release_result
+    max_retries: 1
+    retry_delay: 1.0
+    action: |
+      基于交付迭代结果：{{delivery_iterations}}
+      部署命令：{{deploy_command}}
+      项目目录：{{project_root}}
+      如果最终未 APPROVED，则明确 BLOCKED 并说明原因。
+      如果 APPROVED 且 deploy_command 非空，执行部署并输出结果。
+      如果 APPROVED 但 deploy_command 为空，输出 MANUAL_DEPLOY 指引。
+
+  - name: write_delivery_report
+    agent: report_agent
+    output_file: "{{output_report}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      请基于以下上下文输出最终项目交付报告：
+      - PM 计划：{{pm_plan_context}}
+      - 迭代结果：{{delivery_iterations}}
+      - 发布结果：{{release_result}}
+      报告必须包含：
+      1) 本次需求与范围
+      2) 实际实现与关键变更
+      3) 每轮测试结果与结论
+      4) 最终是否达到验收标准
+      5) 部署状态与访问方式
+      6) 未达标项与下一轮建议
+      输出简体中文 markdown。

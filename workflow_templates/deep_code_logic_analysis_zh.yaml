@@ -1,0 +1,232 @@
+framework: praisonai
+process: workflow
+name: Deep Code Logic Analysis Template (ZH)
+description: 深度代码逻辑分析模板（入口、执行链、核心模块、数据流、状态流、风险与改造建议）
+input: "请深度分析仓库代码逻辑：{{repo_path}}"
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  repo_path: "."
+  output_doc: "项目整体代码逻辑深度分析.md"
+  output_map: "代码执行链路总览.md"
+  focus_hint: ""
+
+agents:
+  inventory_agent:
+    role: Repository Cartographer
+    goal: 建立高信号代码资产清单并识别分析入口
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是代码库测绘工程师。
+      必须基于工具读取真实文件证据，不允许凭空推断。
+      优先识别以下高信号文件：
+      - 入口文件：main/app/server/index/__main__/cli
+      - 路由与控制器
+      - 核心 service/usecase/manager
+      - 数据模型、DAO/Repository/ORM
+      - 配置与环境变量解析
+      - 任务调度、异步/并发、消息队列
+      输出必须使用简体中文；代码标识符、路径、命令保持原文。
+      结论尽量附文件路径证据。
+
+  entry_agent:
+    role: Bootstrap Analyst
+    goal: 梳理程序启动路径、初始化流程和主执行链入口
+    tools:
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是启动链路分析专家。
+      明确说明：
+      1) 进程从哪里启动；
+      2) 初始化了哪些组件；
+      3) 请求/任务从入口如何进入业务层。
+      必须给出“函数/模块调用链”形式的证据化描述。
+      输出必须使用简体中文，附关键文件路径。
+
+  module_logic_agent:
+    role: Core Logic Analyst
+    goal: 深挖核心业务模块的职责划分与功能实现逻辑
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是核心模块逻辑分析专家。
+      重点回答：
+      - 模块边界如何划分，职责是否清晰；
+      - 每个核心功能的“输入 -> 校验 -> 处理 -> 输出”链路；
+      - 跨模块调用是否存在高耦合或隐式依赖。
+      每条关键结论必须尽量附路径与函数名证据。
+      输出必须使用简体中文。
+
+  dataflow_agent:
+    role: Dataflow Analyst
+    goal: 分析数据模型、状态流转与外部依赖交互
+    tools:
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是数据与状态流分析专家。
+      必须覆盖：
+      - 数据结构/模型定义与使用位置；
+      - 状态如何创建、更新、持久化；
+      - 与数据库/缓存/外部 API 的交互路径；
+      - 失败/重试/幂等处理机制（如存在）。
+      输出必须使用简体中文，附关键路径证据。
+
+  quality_agent:
+    role: Reliability Analyst
+    goal: 识别工程风险、性能瓶颈与可维护性问题
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是可靠性与性能评审专家。
+      重点识别：
+      - 错误处理与异常边界是否充分；
+      - 并发/异步/资源释放风险；
+      - 性能热点与可能的复杂度问题；
+      - 可测试性与可观测性缺口。
+      风险结论要按优先级排序并给出修复建议。
+      输出必须使用简体中文。
+
+  synth_agent:
+    role: Technical Report Synthesizer
+    goal: 汇总所有分支分析并输出深度逻辑文档
+    tools:
+      - list_repo_dirs
+      - list_repo_files
+      - read_text_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是资深技术文档架构师。
+      输出要求：
+      - 以“代码逻辑实现”为中心，不写空泛架构话术；
+      - 明确调用链、模块协作链、数据流和状态流；
+      - 对不确定内容显式标注“证据不足/待验证”；
+      - 给出高优先级改造建议与落地顺序。
+      全文必须使用简体中文；路径、函数名、命令保持原文。
+
+steps:
+  - name: build_repo_inventory
+    agent: inventory_agent
+    output_variable: repo_inventory
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      请对 "{{repo_path}}" 进行高信号代码资产盘点。
+      必须优先定位：
+      - 启动入口文件
+      - 路由/接口入口
+      - 核心业务模块
+      - 数据层与外部依赖层
+      - 配置加载与环境变量相关代码
+      同时给出建议优先阅读路径（按顺序）。
+      {{focus_hint}}
+      输出语言必须为简体中文。
+
+  - name: analyze_entry_bootstrap
+    agent: entry_agent
+    output_variable: entry_bootstrap_analysis
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      基于 {{repo_inventory}}，深度分析 "{{repo_path}}" 的启动与初始化链路。
+      需要产出：
+      - 真实入口点列表（按优先级）
+      - 初始化阶段时序（组件/配置/连接初始化）
+      - 请求或任务进入业务层的第一跳和第二跳调用链
+      输出语言必须为简体中文。
+
+  - name: parallel_deep_analysis
+    parallel:
+      - agent: module_logic_agent
+        action: |
+          基于 {{repo_inventory}} 和 {{entry_bootstrap_analysis}}，
+          深挖核心模块的功能实现逻辑。
+          至少给出 3 条“端到端功能链路”：
+          输入 -> 校验 -> 业务处理 -> 持久化/外部调用 -> 输出。
+          输出语言必须为简体中文。
+
+      - agent: dataflow_agent
+        action: |
+          基于 {{repo_inventory}} 和 {{entry_bootstrap_analysis}}，
+          分析数据模型、状态流转和外部依赖交互。
+          要说明关键数据在模块间如何流动与落库/回传。
+          输出语言必须为简体中文。
+
+      - agent: quality_agent
+        action: |
+          基于 {{repo_inventory}} 和 {{entry_bootstrap_analysis}}，
+          识别可靠性、性能、并发与维护性风险。
+          必须按 P1/P2/P3 分级，并给出可执行修复建议。
+          输出语言必须为简体中文。
+
+  - name: synthesize_logic_context
+    agent: synth_agent
+    output_variable: logic_context
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      综合 {{previous_output}}，构建统一“代码逻辑上下文”。
+      要求：
+      - 保留关键调用链与关键证据路径
+      - 合并重复结论，标记冲突点
+      - 显式标记不确定项与待验证项
+      输出语言必须为简体中文。
+
+  - name: write_deep_logic_report
+    agent: synth_agent
+    output_file: "{{output_doc}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      使用 {{logic_context}} 生成最终“项目整体代码逻辑深度分析”文档（markdown）。
+      文档必须包含以下章节：
+      1) 项目目标与运行边界
+      2) 启动入口与初始化时序
+      3) 核心模块职责与调用关系
+      4) 关键功能端到端逻辑（至少 3 条）
+      5) 数据模型与状态流转
+      6) 外部依赖与交互链路
+      7) 异常处理、容错与恢复机制
+      8) 并发与性能关键点
+      9) 高风险问题清单（P1/P2/P3）与改造建议
+      10) 结论边界、术语解释与后续行动
+      输出语言必须为简体中文。
+      Keep total length <= 3200 words.
+
+  - name: write_execution_map
+    agent: synth_agent
+    output_file: "{{output_map}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      使用 {{logic_context}} 输出“代码执行链路总览”（markdown）。
+      必须包含：
+      - 启动链路图（文本/列表形式）
+      - 请求处理主链路图
+      - 数据流与状态流摘要
+      - 建议调试切入点（按优先级）
+      输出语言必须为简体中文。
+      Keep total length <= 1200 words.

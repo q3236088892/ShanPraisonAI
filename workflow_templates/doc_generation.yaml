@@ -1,0 +1,68 @@
+framework: praisonai
+process: workflow
+name: Documentation Generation Template
+description: Multi-agent flow to generate architecture and operations documentation from repository context
+input: "Generate docs for repository {{repo_path}}"
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  repo_path: "."
+  audience: "engineering team"
+  scope: "architecture, module responsibilities, deployment, troubleshooting"
+  output_doc: "project_documentation.md"
+
+agents:
+  discovery_agent:
+    role: Repository Discovery Analyst
+    goal: Discover structure and key source areas
+    instructions: |
+      Identify key directories, entry points, and configuration artifacts.
+      Provide concise findings with file paths.
+
+  outline_agent:
+    role: Technical Outline Designer
+    goal: Build a clear documentation outline
+    instructions: |
+      Build a practical outline for audience "{{audience}}".
+      Cover scope "{{scope}}" and avoid unnecessary sections.
+
+  writer_agent:
+    role: Technical Writer
+    goal: Produce complete markdown documentation
+    instructions: |
+      Write clear and actionable markdown.
+      Explain terms when first introduced and keep wording concise.
+
+  qa_agent:
+    role: Documentation QA Reviewer
+    goal: Check correctness, readability, and completeness
+    instructions: |
+      Review for missing sections, ambiguity, and inconsistencies.
+      Return final polished markdown with marker [FILE: {{output_doc}}].
+
+steps:
+  - name: parallel_discovery
+    parallel:
+      - agent: discovery_agent
+        action: |
+          Discover repository structure for "{{repo_path}}".
+          Focus on implementation, config, and runtime entry points.
+      - agent: outline_agent
+        action: |
+          Design documentation outline for audience "{{audience}}"
+          and scope "{{scope}}".
+
+  - agent: writer_agent
+    action: |
+      Write full documentation using: {{previous_output}}.
+      Keep it practical and implementation-oriented.
+
+  - agent: qa_agent
+    output_file: "{{output_doc}}"
+    action: |
+      Review and polish writer output: {{previous_output}}.
+      Return final markdown with [FILE: {{output_doc}}].

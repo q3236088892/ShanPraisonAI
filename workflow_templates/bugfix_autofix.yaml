@@ -1,0 +1,75 @@
+framework: praisonai
+process: workflow
+name: Bugfix AutoFix Template
+description: Multi-agent bugfix flow for root cause analysis, implementation, verification, and summary
+input: "Fix bug: {{bug_description}}"
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  bug_description: "Describe the bug and expected behavior"
+  target_path: "."
+  test_command: "pytest -q"
+  report_file: "bugfix_report.md"
+
+agents:
+  triage_agent:
+    role: Bug Triage Engineer
+    goal: Reproduce and locate root cause
+    instructions: |
+      Read code, infer likely root cause, and propose a minimal fix strategy.
+      Prioritize reproducibility and evidence.
+
+  fix_agent:
+    role: Implementation Engineer
+    goal: Apply minimal root-cause fix
+    instructions: |
+      Implement a minimal and maintainable fix.
+      Avoid unrelated refactoring.
+
+  verify_agent:
+    role: Test Engineer
+    goal: Validate fix with test command and focused checks
+    instructions: |
+      Run validation and clearly output PASS or FAIL with key evidence.
+      If failed, include concise failure diagnostics.
+
+  report_agent:
+    role: Release Reporter
+    goal: Produce final change and verification summary
+    instructions: |
+      Output markdown with sections:
+      - Root Cause
+      - Code Changes
+      - Test Results
+      - Risks and Next Steps
+      Include marker [FILE: {{report_file}}].
+
+steps:
+  - agent: triage_agent
+    action: |
+      Analyze bug in "{{target_path}}": {{bug_description}}.
+      Provide root-cause hypothesis and fix plan.
+
+  - agent: fix_agent
+    action: |
+      Apply fix based on triage result: {{previous_output}}.
+      Keep changes minimal and focused.
+
+  - agent: verify_agent
+    action: |
+      Validate fix in "{{target_path}}".
+      Run command: {{test_command}}.
+      Return PASS or FAIL with evidence.
+    repeat:
+      until: "PASS"
+      max_iterations: 3
+
+  - agent: report_agent
+    output_file: "{{report_file}}"
+    action: |
+      Summarize the full bugfix process based on {{previous_output}}.
+      Include [FILE: {{report_file}}].
