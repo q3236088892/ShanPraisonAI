@@ -1269,16 +1269,48 @@ class AgentFlow:
         
         Args:
             input: The input text/prompt for the workflow
-            llm: LLM model to use (default: gpt-4o-mini)
+            llm: LLM model to use (required if workflow/agent/env has no model)
             verbose: Print step outputs
             stream: Enable streaming responses (default: use workflow's stream setting)
             
         Returns:
             Dict with 'output' (final result) and 'steps' (all step results)
         """
-        # Use default LLM if not specified
-        model = llm or self.llm or "gpt-4o-mini"
-        logger.debug(f"Workflow using model: {model} (llm={llm}, default_llm={self.llm})")
+        # Resolve workflow model (strict: no implicit gpt-4o-mini fallback)
+        # Honor CLI `-m/--model` bridge via environment variables.
+        model = (
+            llm
+            or self.llm
+            or os.getenv("PRAISONAI_MODEL")
+            or os.getenv("MODEL_NAME")
+            or os.getenv("OPENAI_MODEL_NAME")
+        )
+
+        # Pure handler-based workflows can run without LLM.
+        requires_model = bool(self.planning) or self.process == "hierarchical"
+        if not requires_model:
+            for workflow_step in self.steps:
+                # Handler-only Task does not require model orchestration.
+                if isinstance(workflow_step, Task):
+                    has_handler = callable(getattr(workflow_step, "handler", None))
+                    has_agent = getattr(workflow_step, "agent", None) is not None
+                    if has_handler and not has_agent:
+                        continue
+                # Any non-handler-only step may invoke Agent.chat and needs a model.
+                requires_model = True
+                break
+
+        if not model and requires_model:
+            raise ValueError(
+                "Workflow model is not configured. "
+                "Please set workflow.llm/default_llm, or pass -m/--model, "
+                "or set PRAISONAI_MODEL/MODEL_NAME/OPENAI_MODEL_NAME. "
+                "Fallback to gpt-4o-mini is disabled."
+            )
+        logger.debug(
+            f"Workflow using model: {model} (llm={llm}, default_llm={self.llm}, "
+            f"requires_model={requires_model})"
+        )
         
         # Use workflow verbose setting if not overridden
         verbose = verbose or self.verbose
@@ -1783,7 +1815,6 @@ class AgentFlow:
             skip_file_write_for_fallback = self._is_empty_response_fallback_output(output)
             if hasattr(step, 'output_file') and step.output_file and output is not None and not skip_file_write_for_fallback:
                 try:
-                    import os
                     output_path = step.output_file
                     # Substitute variables in path
                     for key, value in all_variables.items():
@@ -1888,7 +1919,7 @@ class AgentFlow:
         
         Args:
             input: The input text/prompt for the workflow
-            llm: LLM model to use (default: gpt-4o-mini)
+            llm: LLM model to use (required if workflow/agent/env has no model)
             verbose: Print step outputs
             
         Returns:

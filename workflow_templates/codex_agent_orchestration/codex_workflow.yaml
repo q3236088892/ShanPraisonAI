@@ -1,0 +1,211 @@
+framework: praisonai
+process: workflow
+name: Codex Agent Orchestration Workflow (ZH)
+description: 使用 Codex CLI 作为可编排 Agent 工具，完成“分析 -> 实现 -> 测试 -> 报告”的多轮交付闭环
+input: "请在 {{project_root}} 完成任务：{{task_goal}}"
+approve:
+  - execute_command
+
+workflow:
+  planning: true
+  reasoning: true
+  verbose: true
+
+variables:
+  project_root: "."
+  task_goal: "请描述本次要实现或修复的目标"
+  analysis_only: true
+  coding_guidelines: "最小改动、优先修复根因、保持现有风格、不要做无关重构"
+  codex_model: ""
+  codex_full_auto: false
+  codex_sandbox: "read-only"
+  codex_timeout_sec: 1800
+  codex_extra_args: ""
+  verify_command: ""
+  rounds:
+    - 1
+    - 2
+    - 3
+  output_report: "codex_workflow_report_zh.md"
+
+agents:
+  context_agent:
+    role: 项目上下文分析师
+    goal: 识别项目入口、关键模块和执行边界，确认 Codex 运行前置条件
+    tools:
+      - check_codex_cli
+      - list_files
+      - read_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是资深代码审阅与架构分析工程师。
+      必须先调用 check_codex_cli 检查环境，再进行项目扫描。
+      输出要求：
+      1) 环境检查结论（ENV_OK 或 ENV_BLOCKED）
+      2) 关键目录与入口点（含路径）
+      3) 与本次 task_goal 相关的优先修改区域
+      全文简体中文，路径与命令保持原文。
+
+  planning_agent:
+    role: 开发计划设计师
+    goal: 将任务拆解为 Codex 可执行的分步计划与验收标准
+    tools:
+      - list_files
+      - read_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是交付导向的技术负责人。
+      根据上下文输出“可直接给 Codex 执行”的计划，必须包含：
+      1) 本轮改动目标（按优先级）
+      2) 关键文件清单
+      3) 验收标准（可测试）
+      4) 风险与回滚点
+      全文简体中文。
+
+  codex_agent:
+    role: Codex 执行代理
+    goal: 使用 codex_exec 在项目内实施代码改动并汇报结果
+    tools:
+      - codex_exec
+      - execute_command
+      - list_files
+      - read_file
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是“编排层”中的代码实现代理，本体通过 codex_exec 调用 Codex CLI。
+      执行规则：
+      1) 若输入已包含 "APPROVED:"，直接输出 "APPROVED_EARLY_EXIT"；
+      2) 否则必须至少调用 1 次 codex_exec 执行实现；
+      3) codex_exec 的 task 里必须明确：目标、约束、修改范围、验证命令；
+      4) 输出必须原样保留 codex_exec 返回中的 [CODEX_CMD] 和 [EXIT_CODE] 段落；
+      5) 输出必须包含：修改摘要、关键文件、待验证风险。
+      全文简体中文，命令和路径保持原文。
+
+  qa_agent:
+    role: QA 验证代理
+    goal: 通过真实命令判断是否通过验收，并形成返工清单
+    tools:
+      - execute_command
+      - read_file
+      - list_files
+      - grep_in_file
+    tool_choice: auto
+    instructions: |
+      你是严格 QA。
+      必须执行真实命令验证，不允许只做文字评审。
+      输出格式必须严格二选一开头：
+      - APPROVED: <通过证据>
+      - NEEDS_REWORK: <失败原因 + 可执行修复清单>
+      全文简体中文。
+
+  report_agent:
+    role: 交付报告整合者
+    goal: 汇总上下文、实现与测试结果，输出最终中文交付报告
+    tools:
+      - read_file
+      - list_files
+    tool_choice: auto
+    instructions: |
+      你是项目交付报告负责人。
+      报告必须包含：
+      1) 任务目标与边界
+      2) 实施方案与关键变更
+      3) 每轮 QA 结果
+      4) 最终验收状态
+      5) 风险与下一步建议
+      全文简体中文，结论清晰可追溯。
+
+steps:
+  - name: context_discovery
+    agent: context_agent
+    output_variable: context_snapshot
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      请分析项目 "{{project_root}}"，任务目标为：{{task_goal}}。
+      要求：
+      1) 先调用 check_codex_cli；
+      2) 再调用 list_files(directory="{{project_root}}", pattern="*", max_items=180)；
+      3) 输出 ENV_OK 或 ENV_BLOCKED，并给出关键目录与入口点。
+
+  - name: build_plan
+    agent: planning_agent
+    output_variable: implementation_plan
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      基于上下文 {{context_snapshot}} 为任务 "{{task_goal}}" 制定执行计划。
+      需要明确：
+      - 改动目标
+      - 文件范围
+      - 验收标准（命令级）
+      - 风险与回滚点
+      输出简体中文。
+
+  - name: implementation_qa_loop
+    output_variable: loop_results
+    loop:
+      over: rounds
+      var_name: round
+    steps:
+      - agent: codex_agent
+        action: |
+          当前轮次：{{round}}
+          任务目标：{{task_goal}}
+          编码约束：{{coding_guidelines}}
+          项目目录：{{project_root}}
+          计划：{{implementation_plan}}
+          上轮结果：{{previous_output}}
+
+          执行要求：
+          1) 若上轮包含 "APPROVED:"，输出 "APPROVED_EARLY_EXIT"；
+          2) 否则必须调用 codex_exec，参数建议：
+             - workspace="{{project_root}}"
+             - model="{{codex_model}}"
+             - full_auto={{codex_full_auto}}
+             - sandbox="{{codex_sandbox}}"
+             - timeout_sec={{codex_timeout_sec}}
+             - extra_args="{{codex_extra_args}}"
+          3) 当 analysis_only=true 时，codex_exec 的 task 必须明确“只分析，不修改代码/文件”；
+          4) 当 verify_command 非空时，codex_exec 的 task 中必须包含验证命令：{{verify_command}}；
+          5) 结果中必须保留 [CODEX_CMD] 证据块。
+
+      - agent: qa_agent
+        action: |
+          当前轮次：{{round}}
+          开发输出：{{previous_output}}
+          验证命令：{{verify_command}}
+          项目目录：{{project_root}}
+
+          判定规则：
+          1) 如果开发输出包含 "APPROVED_EARLY_EXIT"，请输出：
+             APPROVED: 上一轮已通过，无需重复改动
+          2) 如果 analysis_only=true 或 verify_command 为空，直接输出：
+             APPROVED: 分析模式无需命令校验
+          3) 否则若 verify_command 非空，必须调用 execute_command(
+             command="{{verify_command}}",
+             cwd="{{project_root}}",
+             timeout_sec=1200
+             ) 并基于结果判定；
+          4) 输出必须以 APPROVED: 或 NEEDS_REWORK: 开头。
+
+  - name: write_report
+    agent: report_agent
+    output_file: "{{output_report}}"
+    max_retries: 2
+    retry_delay: 1.0
+    action: |
+      请根据以下内容生成最终交付报告（简体中文）：
+      - 上下文：{{context_snapshot}}
+      - 计划：{{implementation_plan}}
+      - 多轮结果：{{loop_results}}
+      报告需包含：
+      1) 任务目标与范围
+      2) 实施过程与关键变更
+      3) 每轮 QA 结论
+      4) 最终状态（APPROVED / NEEDS_REWORK / BLOCKED）
+      5) Codex 执行证据（至少包含 [CODEX_CMD]、[EXIT_CODE]）
+      6) 复跑命令与下一步建议

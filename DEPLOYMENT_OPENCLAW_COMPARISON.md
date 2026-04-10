@@ -4,7 +4,7 @@
 
 本文档用于沉淀以下内容：
 
-1. 基于本地源码与官方文档，分析当前 `PraisonAI` 项目的主要功能。
+1. 基于本地源码与官方文档，系统分析当前 `PraisonAI` 项目的架构与功能。
 2. 对比当前流行的 `OpenClaw`，说明定位与能力差异。
 3. 完整记录本次在 Windows + Conda 的部署过程、验证步骤与实际遇到的问题。
 4. 给出第三方 API（OpenAI 兼容网关）配置方案。
@@ -24,38 +24,229 @@
 
 ---
 
-## 3. PraisonAI 主要功能分析
+## 3. PraisonAI 系统架构与代码分析（基于源码实扫）
 
 > 结论：`PraisonAI` 的核心定位是「**多智能体开发/编排框架 + CLI + Dashboard**」，既可 SDK 编程，也可 CLI/可视化运维。
 
+### 3.0 项目整体结构
+
+```
+PraisonAI-main/
+├── src/
+│   ├── praisonai/                    # 上层应用包（CLI + UI + 集成）
+│   │   └── praisonai/
+│   │       ├── cli/                  # CLI 入口与所有命令
+│   │       │   ├── main.py           # 主入口（argparse + workflow 执行）
+│   │       │   ├── commands/         # 60+ 子命令（见 3.2）
+│   │       │   ├── features/         # doctor / profiler / tui / queue
+│   │       │   ├── interactive/      # 交互式前端
+│   │       │   └── session/          # 会话管理
+│   │       ├── claw/                 # Dashboard 应用（aiui 驱动）
+│   │       │   └── default_app.py    # 默认 Agent 注册 + 页面配置
+│   │       ├── ui_chat/              # 轻量聊天 UI
+│   │       ├── flow/                 # Langflow 集成（可视化工作流）
+│   │       │   └── components/       # PraisonAI 自定义 Langflow 组件
+│   │       ├── integrations/         # 外部 CLI 集成
+│   │       │   ├── codex_cli.py      # OpenAI Codex CLI
+│   │       │   ├── claude_code.py    # Claude Code CLI
+│   │       │   ├── gemini_cli.py     # Gemini CLI
+│   │       │   └── cursor_cli.py     # Cursor CLI
+│   │       ├── mcp_server/           # MCP 协议服务端
+│   │       │   ├── adapters/         # 86 个 MCP 工具适配器
+│   │       │   ├── transports/       # stdio / HTTP / WebSocket / SSE
+│   │       │   └── auth/             # 认证
+│   │       ├── bots/                 # Bot 集成（Telegram/Discord/Slack/WhatsApp）
+│   │       ├── gateway/              # API Gateway
+│   │       ├── code/                 # 代码工具（read/write/diff/search_replace）
+│   │       ├── tools/                # CLI 专用工具（multiedit/glob/grep/tts/stt）
+│   │       ├── persistence/          # 持久化（conversation/hooks/knowledge/state）
+│   │       ├── deploy/               # 部署（多 provider）
+│   │       ├── sandbox/              # 沙箱执行
+│   │       ├── scheduler/            # 定时任务
+│   │       └── train/                # 训练（CoT 数据生成）
+│   │
+│   └── praisonai-agents/             # 底层 Agent 引擎包
+│       └── praisonaiagents/
+│           ├── agent/                # Agent 核心类
+│           │   ├── agent.py          # Agent 主类（Mixin 组合模式）
+│           │   ├── chat_mixin.py     # 对话逻辑
+│           │   ├── execution_mixin.py # 执行逻辑
+│           │   ├── memory_mixin.py   # 记忆逻辑
+│           │   ├── tool_execution.py # 工具执行
+│           │   ├── handoff.py        # Agent 间交接
+│           │   └── deep_research_agent.py  # 深度研究 Agent
+│           ├── llm/                  # LLM 调用层
+│           │   ├── llm.py            # 核心 LLM 类（流式/非流式/工具调用/重试）
+│           │   ├── openai_client.py  # OpenAI 原生客户端
+│           │   └── failover.py       # 模型失败切换
+│           ├── workflows/            # 工作流引擎
+│           │   ├── workflows.py      # Workflow 类（顺序/并行/路由/循环执行）
+│           │   └── yaml_parser.py    # YAML 工作流解析器
+│           ├── tools/                # 工具系统
+│           │   ├── __init__.py       # 114 个内置工具注册表（TOOL_MAPPINGS）
+│           │   ├── decorator.py      # @tool 装饰器
+│           │   ├── registry.py       # 工具注册中心
+│           │   └── 各类工具模块...    # duckduckgo/shell/file/python/tavily/exa 等
+│           ├── memory/               # 记忆系统
+│           │   ├── memory.py         # Memory 主类
+│           │   ├── adapters/         # 多后端（chroma/redis/mongodb/postgresql）
+│           │   └── learn/            # 学习记忆
+│           ├── knowledge/            # 知识库
+│           ├── rag/                  # RAG 检索增强
+│           ├── mcp/                  # MCP 客户端
+│           ├── guardrails/           # 安全护栏
+│           ├── planning/             # 规划系统
+│           ├── config/               # 配置系统（feature_configs/presets/loader）
+│           ├── plugins/              # 插件系统
+│           ├── context/              # 上下文管理（FastContext）
+│           ├── hooks/                # Hook 系统
+│           ├── telemetry/            # 遥测与监控
+│           ├── eval/                 # 评估
+│           └── ui/                   # UI 协议（A2A/AGUI/A2UI）
+│
+├── workflow_templates/               # 可复用工作流模板
+│   ├── codebase_analysis.yaml        # 代码库分析
+│   ├── bugfix_autofix.yaml           # Bug 自动修复
+│   ├── doc_generation.yaml           # 文档生成
+│   ├── tools.py                      # 模板用本地工具
+│   └── codex_agent_orchestration/    # Codex 编排模板
+│
+└── examples/                         # 示例文件
+```
+
+### 3.0.1 两包分层设计
+
+| 包 | 定位 | 核心职责 |
+|---|---|---|
+| `praisonaiagents` | 底层引擎 | Agent/LLM/Workflow/Tools/Memory/Knowledge/RAG/MCP 等核心能力 |
+| `praisonai` | 上层应用 | CLI/Dashboard/Bot/Gateway/MCP Server/外部集成/部署 |
+
+关键设计：`praisonaiagents` 可独立使用（`pip install praisonaiagents`），`praisonai` 依赖它并在其上构建完整平台能力。
+
+### 3.0.2 Agent 类架构（Mixin 组合模式）
+
+`Agent` 类位于 `agent/agent.py`，采用 Mixin 模式拆分职责：
+
+```
+Agent(ChatMixin, ExecutionMixin, MemoryMixin, ToolExecutionMixin, ChatHandlerMixin, SessionManagerMixin)
+```
+
+| Mixin | 职责 |
+|---|---|
+| `ChatMixin` | 对话主循环（`chat()`/`achat()`） |
+| `ExecutionMixin` | 任务执行（`start()`/`astart()`） |
+| `MemoryMixin` | 记忆存储与检索 |
+| `ToolExecutionMixin` | 工具调用执行 |
+| `ChatHandlerMixin` | 对话消息处理 |
+| `SessionManagerMixin` | 会话状态管理 |
+
+### 3.0.3 LLM 调用层架构
+
+`llm/llm.py` 是所有模型调用的核心，主要职责：
+
+1. **双路径分发**：OpenAI 原生 SDK（直连）vs LiteLLM（多 provider 兼容）
+2. **流式/非流式**：根据模型能力和配置自动选择
+3. **工具调用处理**：标准 `tool_calls` 解析 + 文本 JSON fallback + 参数容错
+4. **第三方网关兼容**：自动检测 → 模型路由改写 → 参数过滤 → 字段提取扩展（详见第 19 节）
+5. **重试与兜底**：空响应重试 → 流式探测恢复 → 降级提示
+
+### 3.0.4 Workflow 引擎架构
+
+`workflows/workflows.py` 支持以下执行模式：
+
+| 模式 | 实现 | 说明 |
+|---|---|---|
+| 顺序执行 | `_execute_step()` 串行 | 步骤间传递 `previous_output` |
+| 并行执行 | `parallel()` + ThreadPoolExecutor | 多分支同时运行，支持 `PRAISONAI_WORKFLOW_PARALLEL_MAX_WORKERS` |
+| 条件路由 | `route()` | 根据上一步输出决定分支 |
+| 循环 | `loop()` / `repeat()` | 条件循环或固定次数重复 |
+| 包含 | `include()` | 嵌套子工作流 |
+
+`yaml_parser.py` 负责将 YAML 定义转换为 `Workflow` 对象，关键透传逻辑：
+- 模型优先级：`agent_config.llm > PRAISONAI_MODEL > MODEL_NAME > OPENAI_MODEL_NAME`
+- `max_tokens` 优先级：YAML agent > YAML llm > `PRAISONAI_WORKFLOW_MAX_TOKENS` > `PRAISONAI_MAX_TOKENS`
+
+### 3.0.5 工具系统架构
+
+工具解析优先级（`ToolResolver`）：
+
+1. 本地 `tools.py`（YAML 同目录自动加载）
+2. `praisonaiagents` 内置工具（`TOOL_MAPPINGS`，114 个）
+3. `praisonai` CLI 工具
+4. 全局 `ToolRegistry`
+
+工具注册方式：
+- `@tool` 装饰器
+- `TOOL_MAPPINGS` 映射表（懒加载）
+- MCP 协议动态注册
+- YAML `tools:` 字段引用
+
+### 3.0.6 懒加载设计
+
+整个 `praisonaiagents` 包采用**集中式懒加载**（`__init__.py` + `_lazy.py`）：
+
+- `_LAZY_IMPORTS` 映射表定义 186+ 个延迟导入项
+- `__getattr__` + `create_lazy_getattr_with_fallback()` 实现按需加载
+- 重依赖（LiteLLM、Rich、工具模块）仅在首次使用时导入
+- 效果：包导入时间从 ~420ms 降至 ~20ms（silent 模式）
+
 ### 3.1 框架层能力
 
-从项目 README 与源码可确认以下核心能力：
+从项目源码可确认以下核心能力：
 
 - 多智能体编排（协作、handoff、工作流模式）
-- 规划执行（Planning）
-- 深度研究（Deep Research）
-- MCP 协议接入（stdio / HTTP / WebSocket / SSE）
-- 记忆与检索（Memory / RAG）
-- Guardrails（输入/输出约束）
-- 多 Provider 模型接入
+- 规划执行（Planning）— `planning/` 模块，含 Plan/TodoList/PlanningAgent
+- 深度研究（Deep Research）— `agent/deep_research_agent.py`
+- MCP 协议接入（stdio / HTTP / WebSocket / SSE）— 客户端 `mcp/` + 服务端 `mcp_server/`
+- 记忆与检索（Memory / RAG）— `memory/` + `rag/` + 多后端适配
+- 知识库（Knowledge）— `knowledge/` + chunking
+- Guardrails（输入/输出约束）— `guardrails/`
+- 多 Provider 模型接入 — LiteLLM 集成 + 原生 OpenAI SDK
+- 模型失败切换（Failover）— `llm/failover.py`
+- 上下文管理（FastContext）— `context/fast/`
+- 插件系统 — `plugins/`（单文件插件 + 协议驱动）
+- Hook 系统 — `hooks/`
+- 遥测与监控 — `telemetry/`
+- 外部 CLI 集成 — Codex / Claude / Gemini / Cursor
 
-### 3.2 CLI 与运行面能力
+### 3.2 CLI 命令全景（60+ 命令，基于源码实扫）
 
-从 `src/praisonai/praisonai/cli/commands` 目录可见，CLI 具备较完整的运维与开发命令面，包括但不限于：
+从 `src/praisonai/praisonai/cli/commands/` 目录实扫，CLI 具备以下命令：
 
-- `ui` / `claw`（轻量聊天页/完整仪表盘）
-- `serve` / `gateway` / `bot`
-- `workflow` / `tools` / `memory` / `knowledge` / `rag`
-- `mcp` / `acp` / `sandbox`
-- `eval` / `benchmark` / `profile` / `traces`
-
-这说明它不仅是 SDK，更是一个可运行平台。
+| 类别 | 命令 | 说明 |
+|---|---|---|
+| **UI/服务** | `ui`, `claw`, `chat`, `code`, `serve`, `gateway`, `app` | 各类 UI 与服务入口 |
+| **工作流** | `workflow`, `flow` | YAML 工作流执行 / Langflow 可视化 |
+| **Agent 管理** | `agents`, `run`, `batch` | Agent 注册/运行/批量执行 |
+| **工具** | `tools`, `mcp`, `acp`, `lsp` | 工具管理/MCP/ACP/LSP 集成 |
+| **数据** | `memory`, `knowledge`, `rag`, `retrieval` | 记忆/知识库/RAG |
+| **Bot** | `bot` | Telegram/Discord/Slack/WhatsApp 机器人 |
+| **通讯** | `call`, `realtime` | 语音通话/实时通讯 |
+| **开发** | `debug`, `diag`, `doctor`, `test`, `eval`, `benchmark`, `profile`, `traces` | 调试/诊断/测试/评估 |
+| **运维** | `deploy`, `sandbox`, `schedule`, `hooks`, `session`, `config`, `paths`, `environment` | 部署/沙箱/调度/配置 |
+| **内容** | `commit`, `docs`, `examples`, `templates`, `recipe`, `research` | Git/文档/示例/模板 |
+| **其他** | `completion`, `version`, `publish`, `registry`, `plugins`, `skills`, `obs`, `langfuse`, `todo`, `loop`, `replay`, `context`, `tracker`, `audit`, `standardise`, `package`, `browser`, `endpoints` | 补全/版本/发布/注册/插件等 |
 
 ### 3.3 UI 形态
 
-- `praisonai ui`：默认仅聊天页面（你截图看到的情况）
-- `praisonai claw`：完整 Dashboard（Chat、Agents、Memory、Knowledge、Channels、Guardrails、Cron、Logs 等）
+- `praisonai ui`：默认仅聊天页面
+- `praisonai claw`：完整 Dashboard，由 `aiui` 驱动，默认启用 13 个页面（chat/channels/agents/skills/memory/knowledge/cron/guardrails/sessions/usage/config/logs/debug）+ Feature Explorer
+- `praisonai flow`：Langflow 可视化工作流（需独立安装 `langflow`，见第 13 节）
+
+### 3.4 安装模式与依赖分层
+
+| 安装模式 | 命令 | 包含内容 |
+|---|---|---|
+| 最小安装 | `pip install praisonai` | 核心 CLI + LiteLLM + YAML |
+| 轻量 UI | `pip install "praisonai[ui]"` | + aiui 聊天页 |
+| 完整 Dashboard | `pip install "praisonai[claw]"` | + aiui 全页面 + chainlit + 搜索 + Bot + 存储后端 |
+| API 服务 | `pip install "praisonai[api]"` | + FastAPI + uvicorn |
+| Bot | `pip install "praisonai[bot]"` | + Telegram/Discord/Slack SDK |
+| 可视化流程 | `pip install praisonai && pip install langflow` | + Langflow（独立安装，见 13.2 节） |
+| 精简模式 | `pip install "praisonai[lite]"` | 无 TUI/LiteLLM，仅核心 Agent |
+| 全量 | `pip install "praisonai[all]"` | 除 flow/bot 外全部 |
+
+> 注意：`pyproject.toml` 中**没有 `flow` 这个 extras 组**，`langflow` 需手动额外安装。README 中 `praisonai[flow]` 的说法是文档 bug（见 13.2 节）。
 
 ---
 
@@ -166,6 +357,15 @@ Invoke-WebRequest -Uri "http://127.0.0.1:8082" -UseBasicParsing
 conda env config vars set -n praisonai OPENAI_API_KEY="sk-c8141e53a6062597ac88bee8f115b5c6e2a2461f4a9c99a36e6dbe5368c31c1d"
 conda env config vars set -n praisonai OPENAI_BASE_URL="https://ice.v.ua/v1"
 conda env config vars set -n praisonai OPENAI_API_BASE="https://ice.v.ua/v1"
+
+conda env config vars set -n praisonai OPENAI_API_KEY="sk-oLRVRGxR7w6UIATAh"
+conda env config vars set -n praisonai OPENAI_BASE_URL="http://localhost:8317/v1"
+conda env config vars set -n praisonai OPENAI_API_BASE="http://localhost:8317/v1"
+
+conda env config vars set -n praisonai OPENAI_API_KEY="sk-c8141e53a6062597ac88bee8f115b5c6e2a2461f4a9c99a36e6dbe5368c31c1d"
+conda env config vars set -n praisonai OPENAI_BASE_URL="https://ice.v.ua/v1"
+conda env config vars set -n praisonai OPENAI_API_BASE="https://ice.v.ua/v1"
+
 conda env config vars set -n praisonai PRAISONAI_MODEL="gpt-5.3-codex"
 ```
 
@@ -175,6 +375,184 @@ conda env config vars set -n praisonai PRAISONAI_MODEL="gpt-5.3-codex"
 conda deactivate
 conda activate praisonai
 ```
+
+### 18. 2026-04-09 补充：Codex 编排工作流最终落地（native 模式为主）
+
+这轮关于 `workflow_templates/codex_agent_orchestration/` 的目标，不再是“把 Codex 包成一个受限工具”，而是：
+
+1. **默认复用真实 Codex 运行态**；  
+2. 在 workflow 中仍可编排；  
+3. 失败时不污染 Markdown；  
+4. 保留一个可回退的“隔离模式（isolated）”。  
+
+#### 18.1 这次真正确认的根因
+
+这次不是单一问题，而是三层问题叠加：
+
+1. **输出混乱**  
+   - 早期 handler 在 Codex 执行失败时，会把 `[CODEX_CMD] / [STDERR] / reconnect 日志` 直接写入 Markdown。  
+   - 结果看起来像“Codex 生成了乱报告”，实际上是**错误诊断被当正文落盘**。
+
+2. **看起来卡住**  
+   - `codex exec` 在 workflow 中最开始没有可见进度，终端会长期停在 `Executing workflow...`。  
+   - 这不等于死锁，很多时候只是 Codex 正在初始化、读取技能、扫描代码、组织输出。  
+   - 但对“完整项目分析”来说，`60s` 通常只适合作为**异常探测阈值**，不适合作为正式报告的硬截止。
+
+3. **直接用 Codex 与 workflow 调 Codex 的运行态不一致**  
+   - `praisonai` 的 conda 环境读取的是 `OPENAI_BASE_URL / OPENAI_API_BASE / OPENAI_API_KEY`；  
+   - Codex CLI 默认读取 `~/.codex/config.toml` 和 `~/.codex/auth.json`；  
+   - 两边配置、provider、skills、MCP、memory、plugins、developer instructions 不一致时，虽然“底层都叫 Codex”，行为也会明显不同。  
+
+#### 18.2 本轮已落地的代码与模板修改
+
+已修改文件：
+
+1. `workflow_templates/codex_agent_orchestration/tools.py`  
+2. `workflow_templates/codex_agent_orchestration/codex_direct_publish.yaml`  
+3. `workflow_templates/codex_agent_orchestration/codex_two_step_smoke.yaml`  
+4. `workflow_templates/codex_agent_orchestration/codex_two_step_report.yaml`（新增）  
+
+核心改动如下：
+
+| 项 | 改动 | 作用 |
+|---|---|---|
+| 输出收敛 | 失败时只写简短失败摘要，原始日志单独写入 `codex_*_debug.log` | 不再污染最终 Markdown |
+| 心跳输出 | `codex exec` 期间每隔数秒输出 `[CODEX] running ...` | 避免“看起来卡住” |
+| 最终消息提取 | 使用 `--output-last-message` 只取 Codex 最终正文 | 减少过程日志混入 |
+| runtime 模式 | 新增 `codex_runtime_mode` | 支持 `native` / `isolated` 两种运行方式 |
+| native 模式 | 默认直接复用真实 Codex 运行态 | 更接近你平时直接用 Codex |
+| isolated 模式 | 可临时生成 `CODEX_HOME`、镜像工作目录、预采样上下文 | 用于不稳定链路下的兜底与排查 |
+| smoke / report 分离 | 冒烟测试与正式报告模板拆开 | 避免把快测模板误用到正式分析 |
+
+#### 18.3 现在的关键行为：native 与 isolated 的区别
+
+| 维度 | `native`（默认） | `isolated`（回退） |
+|---|---|---|
+| `CODEX_HOME` | 复用真实 `~/.codex` | 临时生成干净 `CODEX_HOME` |
+| Skills / Tools / MCP / Memory | 复用你平时真实 Codex | 尽量减小外部干扰 |
+| 上下文获取 | Codex 自己原生读项目 | workflow 预采样后再喂给 Codex |
+| 工作目录 | 真实项目目录 | 临时镜像目录 |
+| 交互风格 | 最接近直接打开 Codex | 最接近“可控自动执行器” |
+| 推荐场景 | 你要求“像真实 Codex 一样跑” | 你要求“稳定兜底 / 排查 provider 问题” |
+
+#### 18.4 workflow 里调用 Codex，和直接打开 Codex 到底是什么关系
+
+**结论：**
+
+1. workflow 里调用的底层仍然是 **Codex CLI 本体**；  
+2. 不是 PraisonAI 自己伪装出的 agent；  
+3. 但 workflow 仍然会包一层“单次 `codex exec` + 输出落盘 + 后续节点编排”的外壳。  
+
+因此：
+
+- **直接打开 Codex**：是完整交互式会话；  
+- **workflow 调 Codex**：是“Codex 内核 + workflow 外层调度壳”。  
+
+当 `codex_runtime_mode=native` 时，它会尽量复用你真实 Codex 的：
+
+1. system / developer instructions 链路；  
+2. skills；  
+3. tools / MCP；  
+4. 上下文访问方式；  
+5. memory / plugins / config。  
+
+但仍有两个天然差异不会消失：
+
+1. workflow 是**单次非交互执行**，不是持续对话；  
+2. workflow 仍会附加任务约束（如“只分析、不修改、只输出中文 Markdown”）并负责结果落盘。  
+
+#### 18.5 当前推荐模板
+
+| 模板 | 用途 | 是否推荐 |
+|---|---|---|
+| `workflow_templates/codex_agent_orchestration/codex_two_step_smoke.yaml` | 冒烟测试，确认 Codex 可调起 | 仅测试时使用 |
+| `workflow_templates/codex_agent_orchestration/codex_direct_publish.yaml` | 单步正式分析，直接输出报告 | 推荐 |
+| `workflow_templates/codex_agent_orchestration/codex_two_step_report.yaml` | 两步正式分析，第二步追加日期 | 推荐 |
+| `workflow_templates/codex_agent_orchestration/codex_workflow.yaml` | 旧版多节点方案 | **不再推荐作为主入口** |
+
+#### 18.6 最终推荐运行命令（正式）
+
+前提：
+
+1. 已激活 `praisonai` conda 环境；  
+2. `OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_API_BASE` 已在该环境配置；  
+3. `PRAISONAI_MODEL` 可显式设为 `custom_openai/gpt-5.3-codex`。  
+
+##### 18.6.1 两节点正式分析（默认推荐）
+
+```powershell
+conda activate praisonai
+$env:PRAISONAI_MODEL = "custom_openai/gpt-5.3-codex"
+
+D:\conda\envs\praisonai\python.exe -m praisonai workflow run .\workflow_templates\codex_agent_orchestration\codex_two_step_report.yaml -v -m $env:PRAISONAI_MODEL --var project_root="E:\progamecode\AIprogram\test\kirocli2api" --var task_goal="只做分析，不修改代码；输出整体架构、功能详细描述和代码逻辑"
+```
+
+默认输出：
+
+1. `codex_two_step_output_zh.md`  
+2. 如失败则看 `codex_two_step_report_debug.log`  
+
+##### 18.6.2 单步正式分析（不追加日期）
+
+```powershell
+conda activate praisonai
+$env:PRAISONAI_MODEL = "custom_openai/gpt-5.3-codex"
+
+D:\conda\envs\praisonai\python.exe -m praisonai workflow run .\workflow_templates\codex_agent_orchestration\codex_direct_publish.yaml -v -m $env:PRAISONAI_MODEL --var project_root="E:\progamecode\AIprogram\test\kirocli2api" --var task_goal="只做分析，不修改代码；输出整体架构、功能详细描述和代码逻辑"
+```
+
+默认输出：
+
+1. `codex_direct_output_zh.md`  
+2. 如失败则看 `codex_direct_debug.log`  
+
+##### 18.6.3 冒烟测试（仅验证链路，不用于正式报告）
+
+```powershell
+conda activate praisonai
+$env:PRAISONAI_MODEL = "custom_openai/gpt-5.3-codex"
+
+D:\conda\envs\praisonai\python.exe -m praisonai workflow run .\workflow_templates\codex_agent_orchestration\codex_two_step_smoke.yaml -v -m $env:PRAISONAI_MODEL --var project_root="E:\progamecode\AIprogram\test\kirocli2api" --var task_goal="只回复：通过"
+```
+
+#### 18.7 若要强制切回隔离模式（排障 / 兜底）
+
+当你怀疑：
+
+1. 真实 `~/.codex` 配置过重；  
+2. skills / MCP / memory 干扰了单次 workflow；  
+3. provider 切换需要做 A/B 排查；  
+
+可以临时加：
+
+```powershell
+--var codex_runtime_mode="isolated"
+```
+
+隔离模式下的典型行为：
+
+1. 临时 `CODEX_HOME`；  
+2. 临时镜像工作目录；  
+3. 预采样项目上下文；  
+4. 可选禁止 shell/tool 二次扫描。  
+
+#### 18.8 当前已验证结果
+
+在本地项目 `E:\progamecode\AIprogram\test\kirocli2api` 上，本轮已验证：
+
+1. `codex_direct_publish.yaml` 可生成中文架构分析；  
+2. `codex_two_step_report.yaml` 可生成中文架构分析并追加日期；  
+3. 输出文件：
+   - `codex_direct_output_zh.md`
+   - `codex_two_step_output_zh.md`
+
+#### 18.9 实践建议
+
+1. **想尽量像你平时直接开 Codex**：使用默认 `native` 模式。  
+2. **想做稳定性排查**：切到 `isolated` 模式再对比。  
+3. **`60s` 只适合 smoke，不适合完整项目正式分析**。  
+4. 若再次出现“文档内容像日志”，优先检查对应 `codex_*_debug.log`，而不是先怀疑分析正文质量。  
+
 
 ## 7.2 临时会话（仅当前终端）
 
@@ -1843,3 +2221,138 @@ praisonai tools info web_search
 # 3) 校验 YAML 里的 tools 是否都可解析
 praisonai tools validate .\workflow_templates\codebase_analysis_zh.yaml
 ```
+
+
+
+> 旧版 `codex_workflow.yaml` 命令已不再推荐。
+> 请统一使用 **第 18 节**中的：
+>
+> 1. `codex_two_step_report.yaml`（正式两节点分析）
+> 2. `codex_direct_publish.yaml`（正式单步分析）
+> 3. `codex_two_step_smoke.yaml`（仅冒烟测试）
+
+---
+
+## 19. 第三方 API 与官方 OpenAI API 差异总览及对应修复方案（2026-04-09）
+
+> 本节基于本项目完整排障过程（15.x - 16.x 节），系统性总结第三方 OpenAI 兼容网关与官方 API 在协议、路由、参数、解析、Schema、策略六个层面的差异，以及本仓库已落地的修复方案。
+
+### 19.1 协议层差异
+
+| 差异点 | 官方 OpenAI API | 第三方兼容网关 | 影响 |
+|---|---|---|---|
+| Responses API | 支持；LiteLLM 对 `gpt-5.*` 自动走 `responses` bridge | 多数只实现 `chat/completions` | 触发 `Unknown items in responses API response: []`（15.1） |
+| 流式 + 工具调用 | `delta.tool_calls` 稳定返回 | 部分网关流式里 `tool_calls` 字段缺失或格式不标准 | 工具调用被丢弃，模型"说了要做但没做"（15.11） |
+| 非流式 + 工具调用 | `content` + `tool_calls` 正常返回 | 可能返回 `finish_reason=stop` 但 `content=None, tool_calls=None` | workflow 步骤直接空响应（16.18、16.19） |
+| 显式 `tool_choice='auto'` | 正常处理 | 部分网关收到显式 `auto` 后返回空包体 | 整个调用轮次无输出（16.22） |
+| 工具参数 JSON 格式 | 严格单一 JSON 对象 | 可能返回 JSON 后拼接额外文本，或以纯文本 JSON 嵌在 `content` 里 | 工具调用解析失败，函数名降级为 `unknown_function`（14.1） |
+| `max_tokens=null` | 有合理默认行为 | 部分网关收到 `null` 直接返回空内容 | workflow 路径空响应（16.23） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| 第三方网关自动绕开 Responses API | `llm.py` | 检测非官方 base URL 时，`_supports_responses_api()` 返回 `False`；模型名自动加 `custom_openai/` 前缀（15.2） |
+| 流式工具调用解析放开门控 | `llm.py` | `_process_stream_delta()` 不再依赖 `_supports_streaming_tools()` 门控，只要 delta 中存在 `tool_calls` 就解析（15.11） |
+| 第三方端点移除显式 `tool_choice='auto'` | `llm.py` | 检测到第三方端点时默认不注入 `tool_choice='auto'`；提供 `PRAISONAI_FORCE_EXPLICIT_TOOL_CHOICE_AUTO=1` 可恢复（16.22） |
+| 工具参数 JSON 容错解析 | `llm.py` | 新增 `_parse_tool_call_json_arguments()`，使用 `raw_decode` 恢复首个合法 JSON，尾随垃圾仅 warning（14.2） |
+| 文本形式工具调用 fallback | `llm.py` | `tool_calls` 为空且有文本时，尝试 `_try_parse_tool_call_json()` 解析（15.10） |
+| workflow 透传 `max_tokens` | `main.py` + `yaml_parser.py` | `_run_yaml_workflow()` 解析 `--max-tokens` 并桥接到环境变量和 agent 配置（16.23） |
+
+### 19.2 模型路由层差异
+
+| 差异点 | 官方 API | 第三方网关 | 影响 |
+|---|---|---|---|
+| 模型名前缀 | 直接用 `gpt-5.3-codex` | 必须加 `custom_openai/` 前缀 | 不加前缀时 LiteLLM 误走 `responses` bridge（15.1） |
+| `_supports_responses_api()` | 返回 `True` | 必须强制返回 `False` | 同上 |
+| `_supports_streaming_tools()` | 已知模型返回 `True` | 未知模型默认 `False` | 流式工具调用被门控丢弃（15.11） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| 第三方网关自动改写模型路由 | `llm.py` | 检测到第三方 base URL + OpenAI 家族模型名时，自动加 `custom_openai/` 前缀（15.2） |
+| Responses API 判定禁用 | `llm.py` | 非官方 base URL 下 `_supports_responses_api()` 返回 `False`（15.2） |
+| 流式工具门控放开 | `llm.py` | 只要 delta 中存在 `tool_calls/function_call` 就解析，不受能力探测限制（15.11） |
+
+### 19.3 参数透传层差异
+
+| 差异点 | 官方 API | 第三方网关 | 影响 |
+|---|---|---|---|
+| 内部参数过滤 | 官方 SDK 对未知参数容忍度较高 | 严格校验，透传 `force_tool_usage` / `max_tool_repairs` 直接报错 | `unexpected keyword argument`（15.8） |
+| `max_tokens` 透传 | 有默认值兜底 | workflow 路径曾未透传，网关收到 `null` 返回空内容 | workflow 空响应，direct 正常（16.23） |
+| workflow 模型透传 | N/A | `workflow run -m` 的值未稳定透传到 YAML agent 的 `llm` | 部分场景走错模型（16.5） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| 过滤内部编排参数 | `llm.py` | `_build_completion_params()` 中将 `force_tool_usage`、`max_tool_repairs` 加入过滤黑名单（15.8） |
+| workflow 透传 `max_tokens` | `main.py` + `yaml_parser.py` | 解析 `--max-tokens` 并注入 `PRAISONAI_WORKFLOW_MAX_TOKENS`；agent 解析优先级：YAML > 环境变量（16.23） |
+| workflow 透传模型名 | `main.py` + `yaml_parser.py` | `--model/-m/--llm` 桥接到 `PRAISONAI_MODEL`；agent `llm` 优先级：`agent_config > PRAISONAI_MODEL > MODEL_NAME > OPENAI_MODEL_NAME`（16.5） |
+
+### 19.4 返回数据解析层差异
+
+| 差异点 | 官方 API | 第三方网关 | 影响 |
+|---|---|---|---|
+| 返回对象类型 | 标准 dict 或已知 SDK 对象 | 部分返回是 SDK object 而非 dict，字段读取为空 | 有数据但提取为空（16.20） |
+| 文本所在字段 | `message.content` | 可能在 `reasoning_content`、`reasoning`、`answer`、`output`、`final_text` 等非标字段 | 误判为空响应（16.13、16.19） |
+| 工具调用格式 | 标准 `tool_calls` 字段 | 可能以纯文本 JSON 嵌在 `content` 里 | 工具不执行（15.10） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| SDK 对象统一转 dict | `llm.py` | 新增 `_to_mapping()`，尝试 `model_dump()/to_dict()/dict()` 转换后再提取字段（16.20） |
+| 扩展文本提取候选字段 | `llm.py` | `_coerce_content_to_text()`、`_extract_text_from_message_payload()`、`_extract_text_from_completion_response()` 中新增 `reasoning_content/reasoning/answer/output/final_text` 等候选（16.19） |
+| 文本形式工具调用 fallback | `llm.py` | `tool_calls` 为空且有文本时尝试 JSON 解析（15.10） |
+| 空响应结构化诊断 | `llm.py` | `PRAISONAI_EMPTY_RESPONSE_DIAG=1` 时打印 `choice_keys/message_keys/provider_specific_fields`，便于定位真实返回结构（16.19） |
+
+### 19.5 工具 Schema 层差异
+
+| 差异点 | 官方 API | 第三方网关 | 影响 |
+|---|---|---|---|
+| 参数类型容错 | 对 `type: "string"` 的整数参数仍能正确调用 | 严格匹配 schema 类型，`int` 误标为 `string` 降低工具调用稳定性 | 工具调用异常或不触发（16.21） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| 注解映射增强 | `llm.py` | 工具参数生成处新增注解映射函数，支持 `typing` 注解和 `from __future__ import annotations` 下的字符串注解（如 `'int'` -> `integer`）（16.21） |
+
+### 19.6 运行策略层差异
+
+| 差异点 | 官方 API | 第三方网关 | 影响 |
+|---|---|---|---|
+| `force_tool_usage=always` | 模型稳定返回 `tool_calls` | 可能始终不返回，形成无进展死循环 | 空响应循环（15.9） |
+| verbose 模式强制流式 | 正常工作 | 工具场景下文本/工具事件抽取不稳定 | 被判定为空响应（16.18） |
+| 并发调用 | 稳定 | 并行分支更容易触发空响应（网关并发抖动） | workflow 并行步骤批量失败（16.12 - 16.14） |
+
+**对应修复方案：**
+
+| 修复 | 文件 | 要点 |
+|---|---|---|
+| `always` 自动降级 | `llm.py` | 非 Ollama 场景强制一次后自动降级为普通回复模式；`auto` 恢复为仅对 Ollama 生效（15.9、16.16） |
+| verbose 模式保持非流式 | `llm.py` | `use_streaming=False` 时即使 `verbose=true` 也不回切流式（16.18） |
+| 并行串行开关 | `workflows.py` | `PRAISONAI_WORKFLOW_PARALLEL_MAX_WORKERS=1` 时主线程串行执行，不走线程池（16.14） |
+| 空响应多层重试与兜底 | `llm.py` + `workflows.py` | 首轮空文本最多 3 次非流式重试；non-stream 空包时静默 stream 探测恢复；步骤级重试 + 非 LLM 本地兜底产出（15.5、16.10 - 16.11） |
+
+### 19.7 差异根因总结
+
+**官方 API 的行为是确定性的，代码可以依赖其隐含约定；第三方网关只实现了协议子集，且各家子集不同。** 本项目所有第三方兼容修复的核心策略是：
+
+1. **检测到第三方端点时自动降级**：移除 `tool_choice`、绕开 `responses` bridge、关闭强制流式；
+2. **扩大返回数据的字段提取范围**：兼容非标字段和 SDK 对象形态；
+3. **参数链路对齐**：保证 direct / workflow 两条路径参数一致；
+4. **多层重试与兜底**：空响应重试、流式探测恢复、非 LLM 本地兜底产出。
+
+### 19.8 涉及的核心修改文件汇总
+
+| 文件 | 修改类别 |
+|---|---|
+| `src/praisonai-agents/praisonaiagents/llm/llm.py` | 协议兼容、路由改写、参数过滤、解析增强、策略降级、重试兜底 |
+| `src/praisonai-agents/praisonaiagents/workflows/workflows.py` | 并行串行开关、步骤级重试、空响应兜底、UTF-8 编码保护 |
+| `src/praisonai-agents/praisonaiagents/workflows/yaml_parser.py` | 模型/max_tokens/timeout 透传、并行分支 Agent 隔离 |
+| `src/praisonai/praisonai/cli/main.py` | workflow 参数桥接（模型、max_tokens）、tools.py 加载过滤 |
+| `workflow_templates/tools.py` | 工具返回量降载、参数类型注解修正 |
+| `workflow_templates/codebase_analysis.yaml` | 模板降载、工具策略调整 |

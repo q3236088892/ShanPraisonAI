@@ -304,7 +304,7 @@ class YAMLWorkflowParser:
         if not agents_data and 'roles' in data:
             # Convert roles format to agents format
             agents_data = self._convert_roles_to_agents(data['roles'])
-        self._agents = self._parse_agents(agents_data)
+        self._agents = self._parse_agents(agents_data, workflow_llm=llm)
         
         # Parse callbacks
         callbacks_data = data.get('callbacks', {})
@@ -441,7 +441,7 @@ class YAMLWorkflowParser:
             if 'llm' in role_config:
                 llm_config = role_config['llm']
                 if isinstance(llm_config, dict):
-                    agent['llm'] = llm_config.get('model', 'gpt-4o-mini')
+                    agent['llm'] = llm_config.get('model')
                 else:
                     agent['llm'] = llm_config
             
@@ -465,12 +465,13 @@ class YAMLWorkflowParser:
         
         return agents
     
-    def _parse_agents(self, agents_data: Dict[str, Dict]) -> Dict[str, Agent]:
+    def _parse_agents(self, agents_data: Dict[str, Dict], workflow_llm: Optional[Any] = None) -> Dict[str, Agent]:
         """
         Parse agent definitions from YAML.
         
         Args:
             agents_data: Dictionary of agent definitions
+            workflow_llm: Workflow-level default llm (if provided)
             
         Returns:
             Dictionary mapping agent names to Agent objects
@@ -478,12 +479,12 @@ class YAMLWorkflowParser:
         agents = {}
         
         for agent_id, agent_config in agents_data.items():
-            agent = self._create_agent(agent_id, agent_config)
+            agent = self._create_agent(agent_id, agent_config, workflow_llm=workflow_llm)
             agents[agent_id] = agent
         
         return agents
     
-    def _create_agent(self, agent_id: str, config: Dict[str, Any]) -> Any:
+    def _create_agent(self, agent_id: str, config: Dict[str, Any], workflow_llm: Optional[Any] = None) -> Any:
         """
         Create an Agent from configuration.
         
@@ -512,15 +513,35 @@ class YAMLWorkflowParser:
         # LLM configuration
         # Priority:
         # 1) Agent-local llm in YAML
-        # 2) PRAISONAI_MODEL (workflow/CLI-friendly model override)
-        # 3) MODEL_NAME
-        # 4) OPENAI_MODEL_NAME
+        # 2) Workflow-level llm/default_llm
+        # 3) PRAISONAI_MODEL (workflow/CLI-friendly model override)
+        # 4) MODEL_NAME
+        # 5) OPENAI_MODEL_NAME
         llm = (
             config.get('llm')
+            or workflow_llm
             or os.getenv('PRAISONAI_MODEL')
             or os.getenv('MODEL_NAME')
             or os.getenv('OPENAI_MODEL_NAME')
         )
+
+        def _llm_configured(value: Any) -> bool:
+            if value is None:
+                return False
+            if isinstance(value, str):
+                return bool(value.strip())
+            if isinstance(value, dict):
+                model_name = value.get("model")
+                return isinstance(model_name, str) and bool(model_name.strip())
+            return True
+
+        if not _llm_configured(llm):
+            raise ValueError(
+                f"Agent '{agent_id}' missing llm configuration. "
+                "Please set agent.llm in YAML, or set workflow.llm/default_llm, "
+                "or pass -m/--model, or set PRAISONAI_MODEL/MODEL_NAME/OPENAI_MODEL_NAME. "
+                "Fallback to gpt-4o-mini is disabled."
+            )
 
         def _coerce_positive_int(value: Any) -> Optional[int]:
             try:
@@ -1266,12 +1287,59 @@ class YAMLWorkflowParser:
             Task object
         """
         name = step_data.get('name', 'step')
-        action = step_data.get('action', '')
-        
-        return Task(
-            name=name,
-            action=action,
-        )
+        action = step_data.get('action')
+
+        # Optional direct handler support (no LLM orchestration required).
+        # YAML example:
+        # - name: direct_tool_step
+        #   handler: run_codex_direct_publish
+        #   output_file: "report.md"
+        handler = None
+        handler_ref = step_data.get("handler")
+        if handler_ref is not None:
+            if callable(handler_ref):
+                handler = handler_ref
+            elif isinstance(handler_ref, str):
+                handler = self.tool_registry.get(handler_ref) or self._callbacks.get(handler_ref)
+            if handler is None or not callable(handler):
+                raise ValueError(
+                    f"Handler '{handler_ref}' is not callable or not found in tool registry/callbacks"
+                )
+
+        task_kwargs: Dict[str, Any] = {
+            "name": name,
+        }
+
+        # Task requires action/description or handler. Keep action optional when handler is provided.
+        if action is not None:
+            task_kwargs["action"] = action
+        elif handler is None:
+            task_kwargs["action"] = ""
+
+        if handler is not None:
+            task_kwargs["handler"] = handler
+
+        # Keep generic-step parity with common task fields
+        for field in [
+            "expected_output",
+            "context",
+            "output_file",
+            "output_json",
+            "output_pydantic",
+            "create_directory",
+            "callback",
+            "async_execution",
+            "output_variable",
+            "skip_on_failure",
+            "retry_delay",
+            "max_retries",
+            "guardrail",
+            "guardrails",
+        ]:
+            if field in step_data:
+                task_kwargs[field] = step_data[field]
+
+        return Task(**task_kwargs)
     
     def register_tool(self, name: str, tool: Callable) -> None:
         """

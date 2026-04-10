@@ -1,0 +1,104 @@
+# PPT 自动生成流水线
+#
+# 用法：
+#   D:\conda\envs\praisonai\python.exe -m praisonai workflow run \
+#     .\ppt_workflow\ppt_pipeline.yaml \
+#     -m custom_openai/gpt-4o-mini \
+#     --max-tokens 3000 \
+#     --var requirement="做一个关于AI Agent技术趋势的演讲PPT，面向技术管理层" \
+#     --var output_file="AI_Agent_Trends.pptx" \
+#     --var style="dark"
+
+name: ppt-auto-pipeline
+description: "需求 -> 结构设计 -> 代码生成 -> 验证，全自动 PPT 生成"
+
+workflow:
+  verbose: false
+  planning: false
+  reasoning: false
+
+variables:
+  requirement: "{{requirement}}"
+  output_file: "{{output_file}}"
+  style: "{{style}}"
+
+agents:
+  designer:
+    name: PPT Designer
+    role: Slide structure designer
+    instructions: |
+      你是 PPT 结构设计师。根据用户需求，输出严格 JSON（不要 markdown 代码块，不要任何解释文字）。
+      格式：
+      {
+        "title": "演示文稿标题",
+        "subtitle": "副标题（一句话定位）",
+        "slides": [
+          {"type": "content", "title": "页标题", "bullets": ["要点1", "要点2", "要点3"]},
+          {"type": "two_column", "title": "页标题", "left": ["左1","左2"], "right": ["右1","右2"]}
+        ]
+      }
+      规则：
+      1. 总页数 6-10 页（不含封面和结尾，封面和结尾由系统自动生成）
+      2. 每页 3-5 个要点，每个要点 15-30 字，信息密度高
+      3. type 只能是 content 或 two_column
+      4. 对比类内容用 two_column，其他用 content
+      5. 只输出 JSON，不要任何多余文字
+    max_tokens: 2000
+
+  coder:
+    name: PPT Coder
+    role: python-pptx code generator
+    tools: [read_template, generate_pptx]
+    instructions: |
+      你是代码生成器，负责把 JSON 幻灯片结构转为 python-pptx 代码并执行。
+
+      工作步骤（严格按顺序）：
+      1. 调用 read_template(style) 获取代码模板（style 会在 action 中告知）
+      2. 把模板中 # SLIDES_PLACEHOLDER 替换为以下调用：
+         - 首先：add_title_slide("标题", "副标题")
+         - 对 type=content 的页：add_content_slide("页标题", ["要点1", ...])
+         - 对 type=two_column 的页：add_two_column_slide("页标题", ["左1",...], ["右1",...])
+         - 最后：add_title_slide("谢谢", "Q & A")
+      3. 调用 generate_pptx(完整代码, output_path) 生成文件
+
+      规则：
+      - 只做工具调用，不要输出解释
+      - 代码中所有中文字符串用引号包裹
+      - 不要修改模板中的函数定义，只替换 SLIDES_PLACEHOLDER
+    max_tokens: 4000
+    tool_choice: auto
+
+  verifier:
+    name: Verifier
+    role: PPT file verifier
+    tools: [verify_pptx]
+    instructions: |
+      验证 PPT 文件。调用 verify_pptx(file_path) 检查。
+      输出格式（中文）：
+      - 通过时："验证通过：共 X 页，文件大小 Y KB\n页面列表：\n1. 标题1\n2. 标题2\n..."
+      - 失败时："验证失败：原因"
+    max_tokens: 300
+
+steps:
+  - id: design
+    agent: designer
+    action: |
+      请为以下需求设计 PPT 结构（只输出 JSON）：
+      {{requirement}}
+    output_variable: slide_json
+
+  - id: generate
+    agent: coder
+    action: |
+      请按以下步骤生成 PPT：
+      1. 调用 read_template("{{style}}") 获取模板
+      2. 根据以下幻灯片结构替换 SLIDES_PLACEHOLDER：
+      {{slide_json}}
+      3. 调用 generate_pptx(完整代码, "{{output_file}}") 生成文件
+    output_variable: gen_result
+
+  - id: verify
+    agent: verifier
+    action: |
+      请验证文件：调用 verify_pptx("{{output_file}}")
+    output_file: ppt_verification_report.md

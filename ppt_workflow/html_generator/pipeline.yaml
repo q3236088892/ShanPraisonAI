@@ -1,0 +1,127 @@
+# HTML PPT 生成流水线（乔布斯风格）
+#
+# 用法：
+#   D:\conda\envs\praisonai\python.exe -m praisonai workflow run \
+#     .\ppt_workflow\html_generator\pipeline.yaml \
+#     -m custom_openai/gpt-4o-mini \
+#     --max-tokens 4000 \
+#     --var requirement="做一个关于AI Agent技术趋势的演讲" \
+#     --var output_file="presentation.html"
+
+name: html-ppt-pipeline
+description: "需求 -> 内容生成(HTML slides) -> 文件写入 -> 验证"
+
+workflow:
+  verbose: false
+  planning: false
+  reasoning: false
+
+variables:
+  requirement: "{{requirement}}"
+  output_file: "{{output_file}}"
+
+agents:
+  creator:
+    name: Presentation Creator
+    role: Steve Jobs-style presentation designer
+    tools: [read_html_template, write_file]
+    instructions: |
+      你是乔布斯风格的演示文稿设计师。你的任务是生成一个完整的 HTML 演示文件。
+
+      工作步骤：
+      1. 调用 read_html_template() 获取 HTML 模板
+      2. 根据需求设计 8-12 页幻灯片内容
+      3. 将模板中 {{TITLE}} 替换为演示标题
+      4. 将模板中 {{SLIDES}} 替换为所有幻灯片 HTML
+      5. 调用 write_file(output_path, 完整HTML) 写入文件
+
+      乔布斯风格规则：
+      - 每页只讲一个核心观点
+      - 每个要点不超过 15 个字，简洁有力
+      - 第一页用震撼标题 + 一句话副标题
+      - 中间用 slide--content（要点页）和 slide--two-col（对比页）交替
+      - 适当插入 slide--quote（金句页）制造节奏变化
+      - 最后用 slide--end 收尾
+
+      幻灯片类型 HTML 格式：
+
+      封面页：
+      <section class="slide slide--title">
+        <h1>标题</h1>
+        <div class="subtitle">副标题</div>
+      </section>
+
+      内容页：
+      <section class="slide slide--content">
+        <h2>标题</h2>
+        <ul>
+          <li>要点一</li>
+          <li>要点二</li>
+          <li>要点三</li>
+        </ul>
+      </section>
+
+      对比页：
+      <section class="slide slide--two-col">
+        <h2>标题</h2>
+        <div class="columns">
+          <div class="column">
+            <h3>左列标题</h3>
+            <ul><li>要点</li></ul>
+          </div>
+          <div class="column">
+            <h3>右列标题</h3>
+            <ul><li>要点</li></ul>
+          </div>
+        </div>
+      </section>
+
+      金句页：
+      <section class="slide slide--quote">
+        <blockquote>金句内容</blockquote>
+        <div class="attribution">— 出处</div>
+      </section>
+
+      结尾页：
+      <section class="slide slide--end">
+        <h1>谢谢</h1>
+        <div class="subtitle">一句话收尾</div>
+      </section>
+
+      注意：
+      - 直接操作工具，不要输出多余解释
+      - 所有中文内容使用 UTF-8
+      - 确保 HTML 结构完整，不要遗漏闭合标签
+    max_tokens: 5000
+    tool_choice: auto
+
+  verifier:
+    name: Verifier
+    role: HTML PPT verifier
+    tools: [verify_html_ppt]
+    instructions: |
+      验证 HTML 演示文件。调用 verify_html_ppt(file_path) 检查。
+      用中文输出验证结果：
+      - 通过："验证通过：共 X 页幻灯片，文件大小 Y KB，结构完整"
+      - 警告："验证警告：共 X 页，但存在问题：..."
+      - 失败："验证失败：原因"
+    max_tokens: 300
+
+steps:
+  - id: create
+    agent: creator
+    action: |
+      请为以下需求生成乔布斯风格的 HTML 演示文稿：
+      {{requirement}}
+
+      步骤：
+      1. 调用 read_html_template() 获取模板
+      2. 设计内容并替换 {{TITLE}} 和 {{SLIDES}}
+      3. 调用 write_file("{{output_file}}", 完整HTML)
+    output_variable: create_result
+
+  - id: verify
+    agent: verifier
+    action: |
+      请验证文件：调用 verify_html_ppt("{{output_file}}")
+    output_file: html_ppt_report.md

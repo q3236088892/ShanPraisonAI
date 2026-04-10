@@ -1,0 +1,39 @@
+framework: praisonai
+process: workflow
+name: Codex Direct Publish Workflow (ZH)
+description: 单步正式分析流程，默认复用真实 Codex 运行态与原生上下文访问方式
+input: "请在 {{project_root}} 执行任务：{{task_goal}}"
+
+workflow:
+  planning: false
+  reasoning: false
+  verbose: true
+
+variables:
+  project_root: "."
+  task_goal: "请分析项目整体架构、功能实现与代码逻辑（只分析，不修改代码）"
+  codex_model: ""
+  codex_full_auto: false
+  codex_runtime_mode: "native"
+  codex_sandbox: "read-only"
+  codex_timeout_sec: 180
+  codex_poll_sec: 5
+  codex_reasoning_effort: "low"
+  codex_isolated_copy: false
+  codex_use_temp_home: false
+  codex_preload_context: false
+  codex_allow_native_tools: true
+  codex_ephemeral: false
+  codex_context_budget_chars: 60000
+  codex_copy_excludes: ".git,node_modules,.venv,venv,__pycache__,dist,build,coverage,.pytest_cache,.next,.turbo"
+  codex_extra_args: ""
+  codex_output_mode: "brief"
+  codex_debug_file: "codex_direct_debug.log"
+  output_file: "codex_direct_output_zh.md"
+
+steps:
+  - name: codex_direct_publish
+    handler: run_codex_direct_publish
+    output_file: "{{output_file}}"
+    max_retries: 1
+    retry_delay: 0.5

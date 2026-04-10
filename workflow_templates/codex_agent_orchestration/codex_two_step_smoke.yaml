@@ -1,0 +1,40 @@
+framework: praisonai
+process: workflow
+name: Codex Two-Step Smoke Workflow (ZH)
+description: 两节点最小冒烟流程，仅用于快速验证 Codex 可用性，不适合完整项目分析
+input: "请在 {{project_root}} 执行任务：{{task_goal}}"
+
+workflow:
+  planning: false
+  reasoning: false
+  verbose: true
+
+variables:
+  project_root: "."
+  task_goal: "只做分析，不修改代码；输出整体架构、功能详细描述和代码逻辑"
+  codex_model: ""
+  codex_full_auto: false
+  codex_sandbox: "workspace-write"
+  codex_timeout_sec: 60
+  codex_poll_sec: 5
+  codex_reasoning_effort: "medium"
+  codex_isolated_copy: true
+  codex_context_budget_chars: 60000
+  codex_copy_excludes: ".git,node_modules,.venv,venv,__pycache__,dist,build,coverage,.pytest_cache,.next,.turbo"
+  codex_extra_args: ""
+  codex_output_mode: "brief"
+  codex_debug_file: "codex_two_step_debug.log"
+  output_file: "codex_two_step_smoke_output_zh.md"
+
+steps:
+  - name: codex_analysis
+    handler: run_codex_direct_publish
+    output_variable: codex_analysis_text
+    max_retries: 1
+    retry_delay: 0.5
+
+  - name: append_date
+    handler: append_current_date
+    output_file: "{{output_file}}"
+    max_retries: 1
+    retry_delay: 0.5

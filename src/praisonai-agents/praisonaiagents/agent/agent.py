@@ -252,12 +252,21 @@ class Agent(ToolExecutionMixin, ChatHandlerMixin, SessionManagerMixin, ChatMixin
     
     @classmethod
     def _get_default_model(cls):
-        """Get cached default model name from OPENAI_MODEL_NAME env var (thread-safe)."""
+        """Get cached default model name from env (thread-safe, strict mode)."""
         if not cls._default_model_checked:
             with cls._env_cache_lock:
                 if not cls._default_model_checked:
-                    cls._default_model = os.getenv('OPENAI_MODEL_NAME', 'gpt-4o-mini')
+                    cls._default_model = (
+                        os.getenv('PRAISONAI_MODEL')
+                        or os.getenv('MODEL_NAME')
+                        or os.getenv('OPENAI_MODEL_NAME')
+                    )
                     cls._default_model_checked = True
+        if not cls._default_model:
+            raise ValueError(
+                "No default model configured. Please set PRAISONAI_MODEL, MODEL_NAME, or OPENAI_MODEL_NAME, "
+                "or pass llm/model explicitly. Fallback to gpt-4o-mini is disabled."
+            )
         return cls._default_model
     
     @classmethod
@@ -4349,4 +4358,3 @@ Answer:"""
 
     def __str__(self):
         return f"Agent(name='{self.name}', role='{self.role}', goal='{self.goal}')"
-

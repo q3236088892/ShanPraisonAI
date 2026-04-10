@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(D:/conda/envs/praisonai/python.exe -c \"import praisonaiagents.workflows.yaml_parser as y; print\\(y.__file__\\)\")",
+      "Bash(D:/conda/envs/praisonai/python.exe -c \"from ppt_workflow.html_generator.tools import read_html_template; t = read_html_template\\(\\); print\\(f''Template loaded: {len\\(t\\)} chars, has TITLE: {{\"\"{{TITLE}}\"\" in t}}, has SLIDES: {{\"\"{{SLIDES}}\"\" in t}}''\\)\")"
+    ]
+  }
+}
